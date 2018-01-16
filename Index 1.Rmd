@@ -1,0 +1,456 @@
+---
+title: "IPUMS-I Wealth Index - Index 1"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+### Pulling/manipulating data before importing to R
+In IPUMS-I: Select variables to include as many of  
+&nbsp;&nbsp;&nbsp;&nbsp;(COUNTRY, YEAR, SAMPLE, SERIAL, PERNUM, PERWT, RESIDENT preselected),  
+&nbsp;&nbsp;&nbsp;&nbsp;HHWT, PERSONS, OWNERSHIP, ELECTRIC, WATSUP, SEWAGE, FUELCOOK, TRASH, HEAT, AIRCON, ROOMS, TOILET, FLOOR, WALL, ROOF,  
+&nbsp;&nbsp;&nbsp;&nbsp;PHONE, CELL, AUTOS, REFRIG, TV, RADIO,  
+&nbsp;&nbsp;&nbsp;&nbsp;CHBORN, SCHOOL, EDATTAIN, AND OCCISCO  
+as are available.
+
+In JMP or SAS: Uncheck "Use value labels" for all variables that were not preselected. This codebook will not run with value labels.
+
+Note: Search for USER ACTION to find places in this code that require user consideration for each country sample. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr)
+library(dplyr)
+library(magrittr)
+library(FactoMineR)
+library(ggplot2)
+```
+
+### Importing data
+```{r data source}
+#USER ACTION: replace "Zambia_2010.csv" with data from country of interest
+#country <- read.csv("<csv filename here>")
+country <- read.csv("Zambia_2010.csv")
+```
+
+### Building the Index  
+  
+#####Subsetting country (refer to index comparison table provided by Minnesota Population Center)
+
+```{r subsetting detailed}
+#USER ACTION: Comment out lines of code for variables unavailable in country sample:
+country_1 = country %>% 
+  filter(Person.number == 1) %>%
+  select(-c(
+  IPUMS.sample.identifier, 
+  Ownership.of.dwelling..general.version., 
+  Person.number, 
+  Residence.status..de.facto..de.jure, 
+  Children.ever.born, 
+  School.attendance,
+  Educational.attainment..international.recode..general.version.,
+  Educational.attainment..international.recode..detailed.version.,
+  Occupation..ISCO.general, 
+  Telephone.availability,
+  Cellular.phone.availability, 
+  Automobiles.available, 
+  Refrigerator, 
+  Television.set, 
+  Radio.in.household
+  ))
+```
+
+#####Making the variables
+USER ACTION:  
+- Check this code for each data set. Comment out lines of code for variables unavailable in country sample.  
+- Pay special attention to SEWAGE (see notes below) - needs to be checked for each sample  
+- As written, this code removes NIU, Unknown for each variable. User may remove or change filter commands to include NIU, Unknown.  
+
+Make "Not in" function (used for all indices):  
+```{r function not in}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+Relevel variables:
+```{r releveling index1}
+#Making ownership.1 (Owned, Rented, or Other ownership status)
+country_1 <- country_1 %>% filter(Ownership.of.dwelling..detailed.version. %!in% c(0,999)) %>% mutate(ownership.1 = ifelse(Ownership.of.dwelling..detailed.version. %in% 100:194, "Owned", ifelse(Ownership.of.dwelling..detailed.version. %in% 210:239, "Rented", "Other ownership status")))
+
+#Making electric.1 (Has electricity or No electricity)
+country_1 <- country_1 %>% filter(Electricity %!in% c(0,9)) %>% mutate(electric.1 = ifelse(Electricity == 1, "Has electricity", "No electricity"))
+
+#Making water.supply.1 (Access to piped water or No access to piped water)
+country_1 <- country_1 %>% filter(Water.supply %!in% c(0,99)) %>% mutate(water.supply.1 = ifelse(Water.supply %in% 10:18, "Access to piped water","No access to piped water"))
+
+#Note: Sewage is a variable that needs manual attention for Indices 1 and 3. Either, Sewage is ready to be simplified for Index 1 or Sewage is in the form intended for Index 2. In the second case, Sewage may be excluded or included (in simplified form) in Index 1 (at this stage of the research). A more formal or educated recommendation may follow in the course of our research.
+# Run <unique(country_1$Sewage)> to check form of SEWAGE for sample.
+
+#Making sewage.simple.1 (Sewage access [septic or public] or No sewage disposal)
+country_1 <- country_1 %>% filter(Sewage %!in% c(0,99)) %>% mutate(sewage.simple.1 = ifelse(Sewage == 20, "No sewage disposal", "Sewage access"))
+
+# #Making sewage.detailed.1 (Sewage system, Septic system, or No sewage)
+# country_1 <- country_1 %>% filter(Sewage %!in% c(0,99)) %>% mutate(sewage.detailed.1 = ifelse(Sewage == 11, "Sewage system", ifelse(Sewage == 12, "Septic system", "No sewage")))
+
+#Making cooking.fuel.1 (Cook with electricity, Cook with fossil fuel, Cook with solid fuel, or Cook with other fuel)
+country_1 <- country_1 %>% filter(Cooking.fuel %!in% c(0,99)) %>% mutate(cooking.fuel.1 = ifelse(Cooking.fuel == 20, "Cook with electricity", ifelse(Cooking.fuel %in% c(30:47,62:65), "Cook with fossil fuel", ifelse(Cooking.fuel %in% c(50:56,61), "Cook with solid fuels", "Cook with other fuel"))))
+
+#Making trash.1 (Collected by service or No sanitation service)
+country_1 <- country_1 %>% filter(Trash.disposal %!in% c(0,99)) %>% mutate(trash.1 = ifelse(Trash.disposal %in% 10:14, "Trash collected by service", "No sanitation service"))
+
+# #Making heat.1 (Central heating or No central heating)
+# country_1 <- country_1 %>% filter(Central.heating %!in% c(0,9)) %>% mutate(heat.1 = ifelse(Central.heating %in% c(1, 5:7), "No central heating", "Central heating"))
+# 
+# #Alternative: If available for country sample, make aircon.1 to fill in for heat (No air conditioning or Air conditioning)
+# country_1 <- country_1 %>% filter(Air.conditioning %!in% c(0,99)) %>% mutate(aircon.1 = ifelse(Air.conditioning == 10, "No air conditioning", "Air conditioning"))
+
+#Note: We kept Number.of.rooms as an integer, assuming that making all households with code 30 (30+ rooms) equate to 30 rooms would have a negligable effect on the index; very few houses will have greater than 30 rooms, and households with enough wealth for 30 rooms will be ranked similarly to those with greater than 30.
+#Note: We changed Number.of.rooms code 00 (Part of a room; no rooms) to 1 in order to do the calculation (Number.of.person.records/Number.of.rooms), assuming that having part of a room or no room is similar enough to having only one room to have a negligable effect.
+#Note: We rounded number.ppl.per.room.1 to limit the levels that would result in the MCA to only integer values instead of all possible numeric values
+#Note: We also tried binning number.ppl.per.room.1 to be in ranges: 0-2, 3-9, 10+ people per room, as the initial MCA gave disproportional weight to the levels of number.ppl.per.room.1.
+
+#Making number.ppl.per.room.1
+country_1 <- country_1 %>% filter(Number.of.rooms %!in% c(98,99)) %>% mutate(number.of.rooms.1 = ifelse(Number.of.rooms == 0, 1, Number.of.rooms))
+country_1 <- country_1 %>% mutate(number.ppl.per.room.1 = Number.of.person.records.in.the.household/number.of.rooms.1)
+country_1$number.ppl.per.room.1 <- round(country_1$number.ppl.per.room.1)
+country_1$number.ppl.per.room.1 <- as.integer(country_1$number.ppl.per.room.1) 
+
+#Different cutoffs for binning: Making bin.number.ppl.per.room.1
+country_1 <- country_1 %>% mutate(bin.number.ppl.per.room.1 = ifelse(number.ppl.per.room.1 %in% 0:2, "0-2 ppl per room",ifelse(number.ppl.per.room.1 %in% 3:9, "3-9 ppl per room","10+ ppl per room")))
+
+#Further split cutoffs for binning: Making alt.bin.number.ppl.per.room.1
+country_1 <- country_1 %>% mutate(alt.bin.number.ppl.per.room.1 = ifelse(number.ppl.per.room.1 %in% 0:1, "0-1 ppl per room", ifelse(number.ppl.per.room.1 %in% 2:4, "2-4 ppl per room", ifelse(number.ppl.per.room.1 %in% 5:9, "5-9 ppl per room", "10+ ppl per room"))))
+
+#Making toilet.1 (Flush toilet, Non-flush toilet, No toilet)
+country_1 <- country_1 %>% filter(Toilet %!in% c(0,99)) %>% mutate(toilet.1 = ifelse(Toilet == 10, "No toilet",ifelse(Toilet == 21, "Flush toilet","Non-flush toilet")))
+
+#Making floor.1 (Finished or Unfinished)
+country_1 <- country_1 %>% filter(Floor.material %!in% c(0,999)) %>% mutate(floor.1 = ifelse(Floor.material %in% c(200:234,236), "Finished floors", "Unfinished floors"))
+
+#Making wall.1 (Cement or Not cement)
+country_1 <- country_1 %>% filter(Wall.or.building.material %!in% c(0,999)) %>% mutate(wall.1 = ifelse(Wall.or.building.material %in% c(500:513,515:523,545,546), "Cement walls", "Not cement walls"))
+
+#Making roof.1 (Cement or Not cement)
+country_1 <- country_1 %>% filter(Roof.material %!in% c(0,99)) %>% mutate(roof.1 = ifelse(Roof.material %in% c(10:24,29), "Cement roof", "Not cement roof"))
+```
+
+### Beginning the Multiple Component Analysis (Categorical variable counterpart to Principal Component Analysis)
+
+USER ACTION:  
+- Comment out lines of code for variables unavailable in country sample.  
+- Review Sewage variable choice before running this chunk.  
+
+Convert all newly created variables to factors:  
+```{r change to factors}
+country_1$ownership.1 = as.factor(country_1$ownership.1)
+country_1$electric.1 = as.factor(country_1$electric.1)
+country_1$water.supply.1 = as.factor(country_1$water.supply.1)
+
+#Sewage: Comment out the irrelevant variable (sewage.<simple or detailed>.1)
+country_1$sewage.simple.1 = as.factor(country_1$sewage.simple.1)
+#country_1$sewage.detailed.1 = as.factor(country_1$sewage.detailed.1)
+
+country_1$cooking.fuel.1 = as.factor(country_1$cooking.fuel.1)
+country_1$trash.1 = as.factor(country_1$trash.1)
+#country_1$heat.1 = as.factor(country_1$heat.1)
+#country_1$aircon.1 = as.factor(country_1$aircon.1)
+country_1$number.ppl.per.room.1 = as.factor(country_1$number.ppl.per.room.1)
+country_1$bin.number.ppl.per.room.1 = as.factor(country_1$bin.number.ppl.per.room.1)
+country_1$alt.bin.number.ppl.per.room.1 = as.factor(country_1$alt.bin.number.ppl.per.room.1)
+country_1$toilet.1 = as.factor(country_1$toilet.1)
+country_1$floor.1 = as.factor(country_1$floor.1)
+country_1$wall.1 = as.factor(country_1$wall.1)
+country_1$roof.1 = as.factor(country_1$roof.1)
+```
+
+Setting row names to the Household.serial.number:  
+USER ACTION: If using a sample containing more than one country, the row name needs to contain the full IPUMS idendifier and Household.serial.number to track the individual houses through the full MCA analysis. 
+```{r serial numbers}
+row.names(country_1) = country_1$Household.serial.number
+```
+
+#####Building the MCA model:  
+
+USER ACTION: Comment out variables unavailable in the country sample:
+```{r mca1234}
+country_1.sub = select(country_1, c(ownership.1, 
+                                    electric.1, 
+                                    water.supply.1, 
+                                    sewage.simple.1, 
+                                    #sewage.detailed.1,
+                                    cooking.fuel.1,
+                                    trash.1,
+                                    #heat.1,
+                                    #aircon.1,
+                                    bin.number.ppl.per.room.1,
+                                    toilet.1,
+                                    floor.1,
+                                    wall.1,
+                                    roof.1))
+
+country_1.mca = MCA(country_1.sub,row.w = country_1$Household.weight, graph = FALSE)
+```
+
+Visualizing variable loadings:  
+```{r loadings1234, echo = FALSE}
+loadings_1 = data.frame(country_1.mca$var$coord[,1])
+colnames(loadings_1) = "weights"
+loadings_1$levels = rownames(loadings_1)
+ggplot(data = loadings_1) + 
+  geom_bar(aes(x = reorder(levels,weights), y = weights), stat = 'identity', 
+           col = "darkblue", fill = "darkblue", alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90), 
+        plot.title = element_text(size = 20, face = "bold")) +
+  ggtitle("Index 1 Loadings") + 
+  xlab("Dwelling Characteristic") +
+  ylab("Index Weight")
+```
+
+###Index Correlation with Accepted Outcomes: School Attendance, Education Attainment, Fertility Rate, and Occupation Level
+
+Data frame of household score:
+```{r household score}
+households_1 <- data.frame(country_1.mca$ind$coord[,1])
+households_1$ID <- rownames(households_1)
+colnames(households_1) <- c("score","ID")
+```
+
+Breaking household index score into quintiles:  
+```{r quints 1 and 2}
+households_1.quint <- arrange(households_1,score)
+households_1.quint$rows <- c(1:nrow(households_1))
+
+households_1.quint <- households_1.quint %>%
+  mutate(quintiles = ifelse(rows >= 1 & rows < nrow(households_1)/5, "Q1", ifelse(
+    rows >= nrow(households_1)/5 & rows < 2*nrow(households_1)/5, "Q2", ifelse(
+      rows >= 2*nrow(households_1)/5 & rows < 3*nrow(households_1)/5, "Q3", ifelse(
+        rows >= 3*nrow(households_1)/5 & rows < 4*nrow(households_1)/5, "Q4", "Q5"
+        )
+      )
+    )
+  ))
+```
+
+Subsetting country to include only selected outcomes:
+```{r subset for outcomes}
+outcomes <- country %>% 
+  select(c(Household.serial.number, Household.weight, Person.number, Person.weight, 
+           Children.ever.born, School.attendance, Occupation..ISCO.general))
+```
+
+#####Average number of children born per woman
+Three approaches to represent household wealth versus fertility rate:  
+
+1. Household trends by wealth quintile  
+  
+Finding average number of children born per woman for each household:
+```{r avg children per woman}
+#Exclude irrelevant indicators
+children <- outcomes %>% select(c(Household.serial.number, Household.weight, Person.number, Person.weight, Children.ever.born))
+
+#Exclude individuals who are not in universe (Universe is women of childbearing age)
+children <- children %>% filter(Children.ever.born %!in% c(98,99))
+
+#Find the average number of children per woman for each household
+children.group <- children %>% 
+  group_by(Household.serial.number) %>%
+  dplyr::summarise(avg_ch = mean(Children.ever.born))
+
+colnames(children.group) <- c("ID", "Avg.num.child")
+children.group$ID <- as.character(children.group$ID)
+```
+
+Joining household index score with average number of children born per woman, then averaging by quintiles:  
+```{r score join children per woman}
+#Join tables 
+households_1.quint.children.group <- inner_join(households_1.quint,children.group,by="ID")
+
+#Group by quintiles, then summarise by average number of children (average of the average per woman for each household)
+households_1.quint.children.group <- households_1.quint.children.group %>% 
+  group_by(quintiles) %>% 
+  dplyr::summarise(avg.child.woman = mean(Avg.num.child))
+
+households_1.quint.children.group$quintiles <- as.factor(households_1.quint.children.group$quintiles)
+
+#USER ACTION: The user may need to relevel the quintiles if they are out of order
+#households_1.quint.children.group$quintiles = factor(households_1.quint.children.group$quintiles,levels(households_1.quint.children.group$quintiles)[c(3,2,1,4,5)])
+```
+
+Plot average number of children per woman of each quintile:  
+```{r plot children per woman by quintile, echo = FALSE}
+ggplot(data = households_1.quint.children.group) + 
+  geom_bar(aes(x = quintiles, y = avg.child.woman), stat = 'identity',
+           col = "darkblue", fill = "darkblue", alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 20, face = "bold")) +
+  ggtitle("Index 1 - Fertility Rate by Quintile") + 
+  xlab("Wealth Quintiles") +
+  ylab("Average Children Per Woman")
+```
+
+2. Anova analysis relating wealth index score to number of children per woman
+```{r}
+children$Household.serial.number <- as.character(children$Household.serial.number)
+
+#Join tables for individual household wealth scores and number of children born
+households_1.children <- inner_join(households_1, children, by = c("ID" = "Household.serial.number"))
+
+#Making a model to predict household score from number of children born
+households_1.children.lm <- lm(households_1.children$score ~
+                                 as.factor(households_1.children$Children.ever.born), 
+                               weights = households_1.children$Person.weight)
+summary(households_1.children.lm)
+```
+
+3. Boxplots relating individual women's fertility to their household's wealth score
+```{r}
+#Side-by-side boxplots
+ggplot(households_1.children, aes(x=as.factor(Children.ever.born), y = score)) +
+  geom_boxplot(color = "darkblue", fill = "darkblue", alpha = 0.2, 
+               outlier.color = "darkblue", outlier.fill = "darkblue", outlier.alpha = 0.4) +
+  ylab("Score of Woman's Residence") +
+  xlab("Children Born Per Woman")
+```
+#####School Attendance
+Two approaches to represent household wealth versus school attendance:  
+
+Finding total number of people in each household currently in school:
+```{r}
+#Exclude irrelevant variables
+school <- outcomes %>% select(c(Household.serial.number, Household.weight, Person.number, 
+                                Person.weight, School.attendance))
+school$Household.serial.number <- as.character(school$Household.serial.number)
+
+#Exclude NIU, Unknown
+school <- school %>% filter(School.attendance %!in% c(0,9))
+
+#Assign 1 if "Yes, in school" and zero otherwise (counts number of people in household currently in school)
+school <- school %>% 
+  mutate(school.indicator = ifelse(School.attendance == 1, 1, 0))
+
+#Find the number of people currently in school in the household. 
+#Also, find the mean Household.weight per house (will be the same for each housemember) to preserve Household.weight in the new dataframe
+school.group <- school %>%
+  group_by(Household.serial.number) %>%
+  dplyr::summarise(total.in.school = sum(school.indicator), 
+                   Household.weight = mean(Household.weight))
+```
+
+1. Anova analysis relating wealth index score to number of people in the household in school
+```{r}
+#Join tables for individual household wealth scores and number of people in the household in school
+households_1.school <- inner_join(school.group, households_1, 
+                                  by = c("Household.serial.number" = "ID"))
+
+#Making a model to predict household score from school attendance in the household
+school.lm <- lm(households_1.school$score ~ as.factor(households_1.school$total.in.school),
+                weights = households_1.school$Household.weight)
+summary(school.lm)
+```
+
+2. Boxplots relating household's school attendance to household's wealth score
+```{r}
+#Side-by-side boxplots
+ggplot(households_1.school, aes(x=as.factor(total.in.school), y = score)) +
+  geom_boxplot(color = "darkblue", fill = "darkblue", alpha = 0.2, 
+               outlier.color = "darkblue", outlier.fill = "darkblue", outlier.alpha = 0.4) +
+   xlab("Persons Currently Attending School") +
+   ylab("Score of Residence")
+```
+
+#####Proportion of household employed in high skilled occupation
+Three approaches to represent household wealth versus occupation level:  
+
+1. Household trends by wealth quintile  
+
+Finding proportion of household members employed in high skilled occupation:
+```{r prop HO per household}
+#Exclude persons not in universe (Persons of working age), label occupations as high (1) or not high (0) skill
+occupation <- outcomes %>% 
+  select(-c(Children.ever.born, School.attendance)) %>%
+  filter(Occupation..ISCO.general %!in% c(98,99)) %>%
+  mutate(high_occ = ifelse(Occupation..ISCO.general %in% c(1:3),1,0))
+
+#Find proportion in high skilled occupation in household (Sum of high_occ divided by the number of people of working age in the household)
+occupation.group <- occupation %>% 
+  group_by(Household.serial.number) %>% 
+  dplyr::summarise(prop_high_occ = sum(high_occ)/n())
+
+colnames(occupation.group) <- c("ID", "prop_high_occ")
+occupation.group$ID <- as.character(occupation.group$ID)
+```
+
+Joining household index score with proportion in high occupations per household, then averaging by quintiles:  
+```{r score join prop HO per household}
+#Join tables
+households_1.quint.occupation.group <- inner_join(households_1.quint,occupation.group,by="ID")
+
+#Group by quintiles, summarise by average proportion of high occupation people in household
+households_1.quint.occupation.group <- households_1.quint.occupation.group %>% 
+  group_by(quintiles) %>%
+  dplyr::summarise(avg_prop_high_occ = mean(prop_high_occ))
+
+households_1.quint.occupation.group$quintiles <-
+  as.factor(households_1.quint.occupation.group$quintiles)
+
+#USER ACTION: The user may need to relevel the quintiles if they are out of order
+#households_1.quint.occupation$quintiles = factor(households_1.quint.occupation$quintiles,levels(households_1.quint.occupation$quintiles)[c(3,2,1,4,5)])
+```
+
+Plot average proportion of people employed in high occupations per household of each quintile
+```{r plot proportion HO per quintile, echo = FALSE}
+ggplot(data = households_1.quint.occupation.group) + 
+  geom_bar(aes(x = quintiles, y = avg_prop_high_occ), stat = 'identity',
+           col = "darkblue", fill = "darkblue", alpha = 0.4) +
+  theme(axis.text.x = element_text(angle = 90),
+        plot.title = element_text(size = 20, face = "bold")) +
+  ggtitle("Index 1 - Household Occupation Levels") + 
+  xlab("Wealth Quintiles") +
+  ylab("Proportion in Household with High-Skilled Occupation")
+```
+
+2. Boxplots relating individual's occupation to their household's wealth score  
+Joining household index score with proportion in high occupations per household:  
+```{r}
+occupation$Household.serial.number <- as.character(occupation$Household.serial.number)
+
+#Join tables 
+households_1.occupation <- inner_join(occupation, households_1, 
+                                      by = c("Household.serial.number" = "ID"))
+households_1.occupation$Occupation..ISCO.general <-
+  as.character(households_1.occupation$Occupation..ISCO.general)
+```
+
+Plot household wealth scores by occupation:
+```{r}
+#The following line of code will print the occupation codes of occupations not present in the country data set. 
+households_1.occupation$Occupation..ISCO.general <-  revalue(households_1.occupation$Occupation..ISCO.general, c("1" = "Legislators, senior officials and managers", "2" = "Legislators, senior officials and managers", "3" = "Professionals", "Technicians and associate professionals", "4" = "Clerks", "5" = "Service workers and shop and market sales", "6" = "Skilled agricultural and fishery workers", "7" = "Crafts and related trades workers", "8" = "Plant and machine operators and assemblers", "9" = "Elementary occupations", "10" = "Armed Forces", "11" = "Other occupations, unspecified or n.e.c.", "97" = "Response suppressed"))
+
+#Side-by-side boxplots 
+ggplot(households_1.occupation, aes(x=reorder(Occupation..ISCO.general, score), y = score)) +
+  geom_boxplot(color = "darkblue", fill = "darkblue", alpha = 0.2, 
+               outlier.color = "darkblue", outlier.fill = "darkblue", outlier.alpha = 0.4) +
+  ylab("Score of Residence") +
+  xlab("Occupation") +
+  coord_flip()
+```
+
+##Do not forget to look at this chunk
+```{r, eval = FALSE}
+occQuintiles12 <- inner_join(households_1.quint.occupation.group,
+                             households_2.quint.occupation.group, by = "quintiles")
+occQuintiles12.long <- occQuintiles12 %>% gather(Index, averageScore, avg_prop_high_occ.x, avg_prop_high_occ.y)
+
+occQuintiles12.long$Index <- revalue(occQuintiles12.long$Index, c("avg_prop_high_occ.x" = "Index 1", "avg_prop_high_occ.y" = "Index 2"))
+
+#tiff('test.tiff', units="in",height = 14, width = 21, res=1200)
+ggplot(occQuintiles12.long,aes(x=quintiles,y=averageScore,fill=factor(Index), col = factor(Index)))+
+  geom_bar(stat="identity",position="dodge", alpha = 0.6)+
+  scale_fill_discrete(name="Index",
+                      breaks=c(1, 2),
+                      labels=c("1", "2"))+
+  xlab("Quintile")+ylab("Mean Score") +
+  ggtitle("Mean Index Value for Occupation Level by Quintile") +
+    scale_fill_manual(values=c("deepskyblue3", "lightblue2")) +
+  scale_color_manual(values = c("deepskyblue4", "lightblue4"))
+#dev.off()
+```

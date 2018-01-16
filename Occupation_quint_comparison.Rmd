@@ -1,0 +1,25 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+##Do not forget to look at this chunk
+```{r, eval = FALSE}
+occQuintiles12 <- inner_join(households_1.quint.occupation.group,
+                             households_2.quint.occupation.group, by = "quintiles")
+occQuintiles12.long <- occQuintiles12 %>% gather(Index, averageScore, avg_prop_high_occ.x, avg_prop_high_occ.y)
+
+occQuintiles12.long$Index <- revalue(occQuintiles12.long$Index, c("avg_prop_high_occ.x" = "Index 1", "avg_prop_high_occ.y" = "Index 2"))
+
+#tiff('test.tiff', units="in",height = 14, width = 21, res=1200)
+ggplot(occQuintiles12.long,aes(x=quintiles,y=averageScore,fill=factor(Index), col = factor(Index)))+
+  geom_bar(stat="identity",position="dodge", alpha = 0.6)+
+  scale_fill_discrete(name="Index",
+                      breaks=c(1, 2),
+                      labels=c("1", "2"))+
+  xlab("Quintile")+ylab("Mean Score") +
+  ggtitle("Mean Index Value for Occupation Level by Quintile") +
+    scale_fill_manual(values=c("deepskyblue3", "lightblue2")) +
+  scale_color_manual(values = c("deepskyblue4", "lightblue4"))
+#dev.off()
+```
